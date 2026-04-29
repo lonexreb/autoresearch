@@ -21,3 +21,6 @@ dev/
 
 # Results file
 results.tsv
+
+# Pre-eval recovery checkpoint (created by train.py before evaluate_bpb)
+pre_eval_checkpoint.pt
