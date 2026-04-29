@@ -140,8 +140,10 @@ class GPT(nn.Module):
             str(i): nn.Embedding(config.vocab_size, kv_dim)
             for i in range(config.n_layer) if has_ve(i, config.n_layer)
         })
-        # Rotary embeddings
-        self.rotary_seq_len = config.sequence_len * 10
+        # Rotary embeddings — sized to the actual sequence length. Training and
+        # eval both clamp to MAX_SEQ_LEN, so allocating 10x was wasted bf16 VRAM.
+        # See issue #6.
+        self.rotary_seq_len = config.sequence_len
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
         self.register_buffer("cos", cos, persistent=False)
         self.register_buffer("sin", sin, persistent=False)
