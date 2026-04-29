@@ -607,10 +607,22 @@ print()  # newline after \r training log
 
 total_tokens = step * TOTAL_BATCH_SIZE
 
+# Pre-eval checkpoint: persist trained weights so a crash during evaluate_bpb
+# (e.g. OOM after model size grew) does not lose the full training run.
+# See issue #7.
+pre_eval_ckpt = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pre_eval_checkpoint.pt")
+torch.save({"model_state_dict": model.state_dict(), "step": step}, pre_eval_ckpt)
+
 # Final eval
 model.eval()
 with autocast_ctx:
     val_bpb = evaluate_bpb(model, tokenizer, DEVICE_BATCH_SIZE)
+
+# Eval succeeded — clean up the recovery checkpoint.
+try:
+    os.remove(pre_eval_ckpt)
+except OSError:
+    pass
 
 # Final summary
 t_end = time.time()
