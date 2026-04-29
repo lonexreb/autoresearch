@@ -182,15 +182,18 @@ def train_tokenizer():
     print(f"Tokenizer: trained in {t1 - t0:.1f}s, saved to {tokenizer_pkl}")
 
     # --- Build token_bytes lookup for BPB evaluation ---
+    # Use mergeable_ranks raw bytes directly. Decoding via tiktoken substitutes
+    # invalid UTF-8 sequences with U+FFFD (3 bytes), which inflates the BPB
+    # denominator and silently underestimates the metric. See issue #384.
     print("Tokenizer: building token_bytes lookup...")
-    special_set = set(SPECIAL_TOKENS)
+    rank_to_bytes = {rank: raw for raw, rank in mergeable_ranks.items()}
     token_bytes_list = []
     for token_id in range(enc.n_vocab):
-        token_str = enc.decode([token_id])
-        if token_str in special_set:
-            token_bytes_list.append(0)
+        if token_id in rank_to_bytes:
+            token_bytes_list.append(len(rank_to_bytes[token_id]))
         else:
-            token_bytes_list.append(len(token_str.encode("utf-8")))
+            # Special tokens have no source bytes
+            token_bytes_list.append(0)
     token_bytes_tensor = torch.tensor(token_bytes_list, dtype=torch.int32)
     torch.save(token_bytes_tensor, token_bytes_path)
     print(f"Tokenizer: saved token_bytes to {token_bytes_path}")
@@ -226,15 +229,16 @@ class Tokenizer:
         return self.bos_token_id
 
     def encode(self, text, prepend=None, num_threads=8):
+        prepend_id = None
         if prepend is not None:
             prepend_id = prepend if isinstance(prepend, int) else self.enc.encode_single_token(prepend)
         if isinstance(text, str):
             ids = self.enc.encode_ordinary(text)
-            if prepend is not None:
+            if prepend_id is not None:
                 ids.insert(0, prepend_id)
         elif isinstance(text, list):
             ids = self.enc.encode_ordinary_batch(text, num_threads=num_threads)
-            if prepend is not None:
+            if prepend_id is not None:
                 for row in ids:
                     row.insert(0, prepend_id)
         else:
@@ -246,9 +250,12 @@ class Tokenizer:
 
 
 def get_token_bytes(device="cpu"):
+    # weights_only=True restricts unpickling to a small safe allowlist of tensor
+    # types, preventing arbitrary code execution from a tampered cache file.
+    # See issue #41.
     path = os.path.join(TOKENIZER_DIR, "token_bytes.pt")
     with open(path, "rb") as f:
-        return torch.load(f, map_location=device)
+        return torch.load(f, map_location=device, weights_only=True)
 
 
 def _document_batches(split, tokenizer_batch_size=128):
